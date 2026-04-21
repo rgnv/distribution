@@ -696,7 +696,7 @@ makeinstall_target() {
 
   ## Steam
   case ${DEVICE} in
-    SM8250|SM8550|SM8650|SDM845)
+    SM6115|SM8250|SM8550|SM8650|SDM845)
       add_emu_core steam steam steam true
       install_script "Start Steam.sh"
       add_es_system steam
