@@ -1,0 +1,76 @@
+From: rgnv <rocknix-builder@rgnv.local>
+Subject: [PATCH] FEX: build against fmt 9.1 (SM6115 / RK3588 libfmt rollback)
+
+ROCKNIX pins libfmt to 9.1.0 on most targets (SM8250/SM8550/SM8650/SDM845
+keep upstream 11). FEX commit 9681559d56 requires fmt >= 10:
+
+  1. Source/Tools/FEXServer/ProcessPipe.cpp uses fmt::println (added in
+     fmt 10.0). Replace with fmt::print + literal "\n".
+
+  2. FEXCore IR formatting routes FEXCore::IR::NodeID through
+     fextl::fmt::format -> fmt::make_format_args, which on fmt 9.1
+     instantiates fmt::detail::fallback_formatter<NodeID> (deleted).
+     The NodeID header already provides an ADL `format_as(NodeID)`
+     hook (fmt 9.0+), but fmt 9.1's `has_format_as` SFINAE does not
+     reliably pick it up via ADL when the call site is inside fmt::detail.
+     Provide an explicit `fmt::formatter<NodeID>` specialization that
+     delegates to `formatter<uint32_t>` so the trait dispatches before
+     fallback_formatter is selected.
+
+Defer kernel patch 0504 (PR_GET/SET_COMPAT_INPUT) per Oracle: only
+needed if Steam x86 controller input fails post-boot.
+
+diff --git a/FEXCore/Source/Interface/IR/IR.h b/FEXCore/Source/Interface/IR/IR.h
+--- a/FEXCore/Source/Interface/IR/IR.h
++++ b/FEXCore/Source/Interface/IR/IR.h
+@@ -689,3 +689,16 @@ struct std::hash<FEXCore::IR::NodeID> {
+     return std::hash<FEXCore::IR::NodeID::value_type> {}(ID.Value);
+   }
+ };
++
++// fmt 9.1 compat: explicit formatter specialization. The ADL `format_as`
++// hook above is not reliably picked up by fmt 9.1's has_format_as trait
++// when invoked from fmt::detail (fallback_formatter<NodeID> gets selected
++// and is deleted). Delegating to formatter<uint32_t> is unambiguous.
++template<>
++struct fmt::formatter<FEXCore::IR::NodeID> : fmt::formatter<uint32_t> {
++  template<typename FormatContext>
++  auto format(const FEXCore::IR::NodeID& id, FormatContext& ctx) const {
++    return fmt::formatter<uint32_t>::format(id.Value, ctx);
++  }
++};
++
+diff --git a/Source/Tools/FEXServer/ProcessPipe.cpp b/Source/Tools/FEXServer/ProcessPipe.cpp
+--- a/Source/Tools/FEXServer/ProcessPipe.cpp
++++ b/Source/Tools/FEXServer/ProcessPipe.cpp
+@@ -436,7 +436,7 @@
+         // No new blocks => no need to regenerate the corresponding cache
+         continue;
+       } else {
+-        fmt::println("  Found {} new blocks ({} total) in code map {} for {}", Blocks.size(), NumPreviousBlocks, BinaryName, File.Filename);
++        fmt::print("  Found {} new blocks ({} total) in code map {} for {}\n", Blocks.size(), NumPreviousBlocks, BinaryName, File.Filename);
+       }
+     }
+ 
+@@ -618,7 +618,7 @@
+         const auto MergedCodeMapFilename = fmt::format("{}/{}", ReadyCodeMapDirectory, BinaryName);
+         const auto LastCodeMapUpdate = std::filesystem::last_write_time(MergedCodeMapFilename, ec);
+         if (std::filesystem::last_write_time(GetCacheFilename(FileInfo), ec) < LastCodeMapUpdate || ec) {
+-          fmt::println("  Scheduling update for {} cache for {}", ec ? "missing" : "outdated", BinaryName);
++          fmt::print("  Scheduling update for {} cache for {}\n", ec ? "missing" : "outdated", BinaryName);
+           NeedsRefresh = NeedsCacheRefresh::Yes;
+         }
+       }
+@@ -630,10 +630,10 @@
+         }
+ 
+         const auto BinaryName = (std::string)FEXCore::CodeMap::GetBaseFilename(File, !HasMultiblock);
+-        fmt::println("Generating cache for {}", BinaryName);
++        fmt::print("Generating cache for {}\n", BinaryName);
+         int Status = RunOfflineCompiler(fmt::format("{}/{}", ReadyCodeMapDirectory, BinaryName).c_str());
+         if (Status != 0) {
+-          fmt::println("ERROR: Cache generation failed with status {}", Status);
++          fmt::print("ERROR: Cache generation failed with status {}\n", Status);
+         }
+       }
+ 
